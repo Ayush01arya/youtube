@@ -127,16 +127,25 @@ document.addEventListener('DOMContentLoaded', function() {
 
             resultItem.appendChild(header);
 
-            // Add download button if successful
+            // Add download buttons if successful
             if (result.success) {
                 const actions = document.createElement('div');
                 actions.className = 'result-actions';
                 actions.innerHTML = `
-                    <a href="/download/${result.filename}" class="btn primary-btn">
-                        <i class="fas fa-download"></i> Download Transcript
-                    </a>
+                    <button class="btn primary-btn download-txt-btn" data-video-id="${result.video_id}">
+                        <i class="fas fa-download"></i> Download TXT
+                    </button>
+                    <button class="btn secondary-btn download-csv-btn" data-video-id="${result.video_id}">
+                        <i class="fas fa-file-csv"></i> Download CSV
+                    </button>
                 `;
                 resultItem.appendChild(actions);
+
+                // Store transcript data in a hidden element to use when downloading
+                const transcriptData = document.createElement('div');
+                transcriptData.className = 'transcript-data hidden';
+                transcriptData.dataset.transcript = JSON.stringify(result.transcript);
+                resultItem.appendChild(transcriptData);
 
                 // Add transcript preview
                 if (result.transcript && result.transcript.length > 0) {
@@ -169,6 +178,75 @@ document.addEventListener('DOMContentLoaded', function() {
 
             resultsContainer.appendChild(resultItem);
         });
+
+        // Add event listeners for download buttons
+        document.querySelectorAll('.download-txt-btn').forEach(button => {
+            button.addEventListener('click', function() {
+                const videoId = this.dataset.videoId;
+                const transcriptData = JSON.parse(this.closest('.result-item').querySelector('.transcript-data').dataset.transcript);
+                downloadTranscript(transcriptData, videoId, 'txt');
+            });
+        });
+
+        document.querySelectorAll('.download-csv-btn').forEach(button => {
+            button.addEventListener('click', function() {
+                const videoId = this.dataset.videoId;
+                const transcriptData = JSON.parse(this.closest('.result-item').querySelector('.transcript-data').dataset.transcript);
+                downloadTranscript(transcriptData, videoId, 'csv');
+            });
+        });
+    }
+
+    // Function to handle downloading transcripts
+    async function downloadTranscript(transcript, videoId, format) {
+        try {
+            const response = await fetch('/download', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    transcript: transcript,
+                    video_id: videoId,
+                    format: format
+                })
+            });
+
+            if (!response.ok) {
+                throw new Error('Download failed');
+            }
+
+            // Get the file name from the Content-Disposition header if available
+            let filename = `${videoId}_transcript.${format}`;
+            const contentDisposition = response.headers.get('Content-Disposition');
+            if (contentDisposition) {
+                const filenameMatch = contentDisposition.match(/filename="?(.+)"?/);
+                if (filenameMatch && filenameMatch[1]) {
+                    filename = filenameMatch[1];
+                }
+            }
+
+            // Create a blob from the response
+            const blob = await response.blob();
+
+            // Create a download link and trigger it
+            const url = window.URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.style.display = 'none';
+            a.href = url;
+            a.download = filename;
+            document.body.appendChild(a);
+            a.click();
+
+            // Clean up
+            window.URL.revokeObjectURL(url);
+            document.body.removeChild(a);
+
+            showToast(`Transcript downloaded as ${format.toUpperCase()}`);
+        } catch (error) {
+            showToast('Download failed. Please try again.');
+            console.error('Download error:', error);
+        }
     }
 
     // Toast notification
@@ -186,31 +264,7 @@ document.addEventListener('DOMContentLoaded', function() {
 
     // Download all button functionality
     downloadAllBtn.addEventListener('click', function() {
-        // Since we don't have backend zip functionality set up,
-        // we'll show a toast with instructions
         showToast('Please use individual download buttons for each transcript');
-
-        // You could add backend zip functionality and use this instead:
-        /*
-        fetch('/download-all', {
-            method: 'GET'
-        })
-        .then(response => response.blob())
-        .then(blob => {
-            const url = window.URL.createObjectURL(blob);
-            const a = document.createElement('a');
-            a.style.display = 'none';
-            a.href = url;
-            a.download = 'revv_growth_transcripts.zip';
-            document.body.appendChild(a);
-            a.click();
-            window.URL.revokeObjectURL(url);
-        })
-        .catch(error => {
-            showToast('Error downloading all transcripts');
-            console.error('Error:', error);
-        });
-        */
     });
 
     // Enter key functionality for single URL input
@@ -344,6 +398,16 @@ document.addEventListener('DOMContentLoaded', function() {
             font-size: 0.85rem;
             margin-top: 0.5rem;
             text-align: center;
+        }
+
+        /* Additional styles for download buttons */
+        .result-actions {
+            display: flex;
+            gap: 10px;
+        }
+
+        .transcript-data {
+            display: none;
         }
     `;
     document.head.appendChild(style);

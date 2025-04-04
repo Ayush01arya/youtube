@@ -1,27 +1,29 @@
 # app.py
 
-from flask import Flask, render_template, request, jsonify, send_file, redirect, url_for
+from flask import Flask, render_template, request, jsonify, make_response
 from youtube_transcript_api import YouTubeTranscriptApi
-from youtube_transcript_api.formatters import TextFormatter
 from urllib.parse import urlparse, parse_qs
 import os
-import time
-import uuid
-import json
+import csv
+import io
 from datetime import datetime
 
 app = Flask(__name__)
-
-# Create output directory
-OUTPUT_DIR = "transcripts"
-os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 
 # Function to extract video ID from URL
 def extract_video_id(url):
     parsed_url = urlparse(url)
-    query_params = parse_qs(parsed_url.query)
-    return query_params.get("v", [None])[0]
+
+    # Handle both youtube.com and youtu.be URLs
+    if parsed_url.netloc == 'youtu.be':
+        return parsed_url.path.lstrip('/')
+
+    if parsed_url.netloc in ('www.youtube.com', 'youtube.com'):
+        query_params = parse_qs(parsed_url.query)
+        return query_params.get("v", [None])[0]
+
+    return None
 
 
 def process_video_url(url):
@@ -31,7 +33,6 @@ def process_video_url(url):
         "video_id": video_id,
         "success": False,
         "message": "",
-        "filename": "",
         "transcript": []
     }
 
@@ -49,26 +50,14 @@ def process_video_url(url):
             minutes = int(start // 60)
             seconds = int(start % 60)
             timestamp = f"[{minutes:02}:{seconds:02}]"
-            text_entry = f"{timestamp} {entry['text']}"
             formatted_transcript.append({
                 "timestamp": timestamp,
                 "raw_time": start,
                 "text": entry['text']
             })
 
-        # Generate unique filename
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        filename = f"{video_id}_{timestamp}.txt"
-        filepath = os.path.join(OUTPUT_DIR, filename)
-
-        # Save transcript to file
-        with open(filepath, "w", encoding="utf-8") as f:
-            for entry in formatted_transcript:
-                f.write(f"{entry['timestamp']} {entry['text']}\n")
-
         result["success"] = True
         result["message"] = f"Successfully processed transcript for {video_id}"
-        result["filename"] = filename
         result["transcript"] = formatted_transcript
 
     except Exception as e:
@@ -102,9 +91,41 @@ def process():
     })
 
 
-@app.route('/download/<filename>')
-def download(filename):
-    return send_file(os.path.join(OUTPUT_DIR, filename), as_attachment=True)
+@app.route('/download', methods=['POST'])
+def download():
+    data = request.json
+    transcript_data = data.get('transcript', [])
+    video_id = data.get('video_id', 'unknown')
+    file_format = data.get('format', 'txt')
+
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    filename = f"{video_id}_{timestamp}"
+
+    if file_format == 'txt':
+        output = io.StringIO()
+        for entry in transcript_data:
+            output.write(f"{entry['timestamp']} {entry['text']}\n")
+
+        response = make_response(output.getvalue())
+        response.headers["Content-Disposition"] = f"attachment; filename={filename}.txt"
+        response.headers["Content-type"] = "text/plain"
+
+    elif file_format == 'csv':
+        output = io.StringIO()
+        writer = csv.writer(output)
+        writer.writerow(['Timestamp', 'Raw Time', 'Text'])
+
+        for entry in transcript_data:
+            writer.writerow([entry['timestamp'], entry['raw_time'], entry['text']])
+
+        response = make_response(output.getvalue())
+        response.headers["Content-Disposition"] = f"attachment; filename={filename}.csv"
+        response.headers["Content-type"] = "text/csv"
+
+    else:
+        return jsonify({"success": False, "message": "Invalid format specified"})
+
+    return response
 
 
 if __name__ == '__main__':
