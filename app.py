@@ -3,7 +3,7 @@ import pandas as pd
 from googleapiclient.discovery import build
 from urllib.parse import urlparse, parse_qs
 from youtube_transcript_api import YouTubeTranscriptApi
-from openai import OpenAI
+import anthropic
 import isodate
 import time
 import base64
@@ -23,11 +23,11 @@ st.markdown("Enter YouTube URLs to extract metadata and generate summaries.")
 with st.sidebar:
     st.header("API Keys")
     youtube_api_key = st.text_input("YouTube API Key", type="password")
-    openai_api_key = st.text_input("OpenAI API Key", type="password")
+    claude_api_key = st.text_input("Claude API Key", type="password")
 
     st.header("Options")
-    generate_summary = st.checkbox("Generate summary with OpenAI", value=True)
-    openai_model = st.selectbox("OpenAI Model", ["gpt-3.5-turbo", "gpt-4"], index=0)
+    generate_summary = st.checkbox("Generate summary with Claude", value=True)
+    claude_model = st.selectbox("Claude Model", ["claude-3-5-sonnet-20240620", "claude-3-opus-20240229", "claude-3-7-sonnet-20250219"], index=0)
 
 
 # Function to extract video ID from URL
@@ -109,20 +109,22 @@ def get_transcript(video_id):
         return ""
 
 
-# Summarize transcript using OpenAI
-def summarize_with_openai(text, openai_client, model="gpt-3.5-turbo"):
+# Summarize transcript using Claude
+def summarize_with_claude(text, claude_client, model="claude-3-5-sonnet-20240620"):
     try:
         # Trim text to avoid token limit issues
-        trimmed_text = text[:3000]
+        trimmed_text = text[:5000]
 
         prompt = f"Summarize the following YouTube transcript concisely:\n\n{trimmed_text}"
-        response = openai_client.chat.completions.create(
+        response = claude_client.messages.create(
             model=model,
-            messages=[{"role": "user", "content": prompt}],
+            max_tokens=500,
             temperature=0.7,
-            max_tokens=500
+            messages=[
+                {"role": "user", "content": prompt}
+            ]
         )
-        return response.choices[0].message.content.strip()
+        return response.content[0].text
     except Exception as e:
         st.error(f"Error generating summary: {str(e)}")
         return "Summary generation failed."
@@ -142,15 +144,15 @@ urls_input = st.text_area("Enter YouTube URLs (one per line)", height=150)
 if st.button("Analyze Videos"):
     if not youtube_api_key:
         st.error("Please enter your YouTube API Key in the sidebar")
-    elif generate_summary and not openai_api_key:
-        st.error("Please enter your OpenAI API Key in the sidebar to generate summaries")
+    elif generate_summary and not claude_api_key:
+        st.error("Please enter your Claude API Key in the sidebar to generate summaries")
     elif not urls_input.strip():
         st.error("Please enter at least one YouTube URL")
     else:
         # Initialize clients
         youtube = build('youtube', 'v3', developerKey=youtube_api_key)
         if generate_summary:
-            openai_client = OpenAI(api_key=openai_api_key)
+            claude_client = anthropic.Anthropic(api_key=claude_api_key)
 
         # Process URLs
         urls = [url.strip() for url in urls_input.splitlines() if url.strip()]
@@ -178,7 +180,7 @@ if st.button("Analyze Videos"):
             if generate_summary:
                 transcript = get_transcript(video_id)
                 if transcript:
-                    metadata['summary'] = summarize_with_openai(transcript, openai_client, openai_model)
+                    metadata['summary'] = summarize_with_claude(transcript, claude_client, claude_model)
                 else:
                     metadata['summary'] = "Transcript not available"
 
@@ -234,7 +236,7 @@ if st.button("Analyze Videos"):
 st.sidebar.markdown("---")
 st.sidebar.markdown("""
 ### Tips:
-- You need valid API keys for both YouTube Data API and OpenAI
+- You need valid API keys for both YouTube Data API and Claude API
 - For multiple videos, enter each URL on a new line
 - Videos without transcripts will not have summaries
 - Summaries are generated using AI and may not be perfect
