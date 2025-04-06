@@ -5,3 +5,4 @@ youtube-transcript-api==1.0.3
 openai==1.70.0
 isodate==0.7.2
 gunicorn==23.0.0
+anthropic==0.49.0
